@@ -9,3 +9,5 @@ scikit-image
 earthengine-api
 google-auth
 google-auth-oauthlib
+torch
+torchvision
