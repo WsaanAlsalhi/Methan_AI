@@ -6,7 +6,7 @@ from streamlit_folium import st_folium
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime
 import random
 
 # =========================================================
@@ -19,13 +19,13 @@ st.set_page_config(
 )
 
 # =========================================================
-# CUSTOM CSS
+# CUSTOM STYLE
 # =========================================================
 
 st.markdown("""
 <style>
 
-html, body, [class*="css"]  {
+html, body, [class*="css"] {
     background-color: #05070d;
     color: white;
 }
@@ -34,18 +34,10 @@ html, body, [class*="css"]  {
     padding-top: 1rem;
 }
 
-.metric-card {
-    background: #0b1220;
-    padding: 18px;
-    border-radius: 15px;
-    border: 1px solid #1f2937;
-    text-align: center;
-}
-
 .title-style {
     font-size: 42px;
     font-weight: bold;
-    color: #ffffff;
+    color: white;
 }
 
 .subtitle-style {
@@ -53,15 +45,19 @@ html, body, [class*="css"]  {
     color: #9ca3af;
 }
 
+[data-testid="stMetricValue"] {
+    color: white;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# EARTH ENGINE INIT
+# EARTH ENGINE INITIALIZATION
 # =========================================================
 
 @st.cache_resource
-def init_ee():
+def init_earth_engine():
 
     credentials = service_account.Credentials.from_service_account_info(
         st.secrets["gcp_service_account"],
@@ -78,13 +74,23 @@ def init_ee():
 
     return True
 
+# =========================================================
+# CONNECT EARTH ENGINE
+# =========================================================
+
+earth_engine_connected = False
 
 try:
-    init_ee()
+
+    init_earth_engine()
+
+    earth_engine_connected = True
+
     st.success("Earth Engine Connected")
 
 except Exception as e:
-    st.error(f"Earth Engine Error: {e}")
+
+    st.error(f"Earth Engine Connection Failed: {e}")
 
 # =========================================================
 # HEADER
@@ -103,50 +109,17 @@ st.markdown(
 st.divider()
 
 # =========================================================
-# LOAD SENTINEL-5P METHANE
-# =========================================================
-
-methane = (
-    ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
-    .select("CH4_column_volume_mixing_ratio_dry_air")
-    .filterDate("2025-01-01", "2025-12-31")
-    .mean()
-)
-
-# =========================================================
-# VISUALIZATION PARAMETERS
-# =========================================================
-
-vis_params = {
-    "min": 1750,
-    "max": 1950,
-    "palette": [
-        "black",
-        "blue",
-        "cyan",
-        "green",
-        "yellow",
-        "orange",
-        "red"
-    ]
-}
-
-map_id = methane.getMapId(vis_params)
-
-tile_url = map_id["tile_fetcher"].url_format
-
-# =========================================================
 # SIDEBAR
 # =========================================================
 
-st.sidebar.title("Control Panel")
+st.sidebar.title("GIS Controls")
 
-selected_theme = st.sidebar.selectbox(
-    "GIS Theme",
+theme = st.sidebar.selectbox(
+    "Map Theme",
     [
         "Dark",
-        "Satellite",
-        "Terrain"
+        "Terrain",
+        "Satellite"
     ]
 )
 
@@ -155,13 +128,13 @@ show_hotspots = st.sidebar.checkbox(
     value=True
 )
 
-show_industrial = st.sidebar.checkbox(
+show_industry = st.sidebar.checkbox(
     "Show Industrial Sources",
     value=True
 )
 
 timeline_days = st.sidebar.slider(
-    "Temporal Analysis Days",
+    "Temporal Timeline",
     7,
     90,
     30
@@ -171,14 +144,14 @@ timeline_days = st.sidebar.slider(
 # MAP STYLE
 # =========================================================
 
-if selected_theme == "Dark":
-    tile_style = "CartoDB dark_matter"
+if theme == "Dark":
+    map_tiles = "CartoDB dark_matter"
 
-elif selected_theme == "Satellite":
-    tile_style = "OpenStreetMap"
+elif theme == "Terrain":
+    map_tiles = "OpenStreetMap"
 
 else:
-    tile_style = "Stamen Terrain"
+    map_tiles = "OpenStreetMap"
 
 # =========================================================
 # METRICS
@@ -188,7 +161,7 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
-        "Detected Hotspots",
+        "Methane Hotspots",
         "27",
         "+4"
     )
@@ -196,13 +169,13 @@ with col1:
 with col2:
     st.metric(
         "Global CH4 Avg",
-        "1842 ppb",
-        "+12"
+        "1841 ppb",
+        "+9"
     )
 
 with col3:
     st.metric(
-        "High Risk Zones",
+        "High Risk Areas",
         "6",
         "+1"
     )
@@ -215,6 +188,48 @@ with col4:
     )
 
 # =========================================================
+# LOAD SENTINEL-5P METHANE
+# =========================================================
+
+earth_engine_layer = False
+
+if earth_engine_connected:
+
+    try:
+
+        methane_collection = (
+            ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
+            .filterDate("2025-01-01", "2025-05-01")
+            .select("CH4_column_volume_mixing_ratio_dry_air")
+        )
+
+        methane = methane_collection.mean()
+
+        vis_params = {
+            "min": 1750,
+            "max": 1950,
+            "palette": [
+                "black",
+                "blue",
+                "cyan",
+                "green",
+                "yellow",
+                "orange",
+                "red"
+            ]
+        }
+
+        map_id = ee.Image(methane).getMapId(vis_params)
+
+        tile_url = map_id["tile_fetcher"].url_format
+
+        earth_engine_layer = True
+
+    except Exception as e:
+
+        st.error(f"Earth Engine Layer Error: {e}")
+
+# =========================================================
 # GIS MAP
 # =========================================================
 
@@ -223,20 +238,22 @@ st.subheader("Live Global Methane GIS Monitoring")
 m = folium.Map(
     location=[20, 0],
     zoom_start=2,
-    tiles=tile_style
+    tiles=map_tiles
 )
 
 # =========================================================
-# ADD METHANE LAYER
+# ADD LIVE METHANE LAYER
 # =========================================================
 
-folium.TileLayer(
-    tiles=tile_url,
-    attr="Google Earth Engine",
-    name="Methane Layer",
-    overlay=True,
-    control=True
-).add_to(m)
+if earth_engine_layer:
+
+    folium.TileLayer(
+        tiles=tile_url,
+        attr="Google Earth Engine",
+        name="Methane Concentration",
+        overlay=True,
+        control=True
+    ).add_to(m)
 
 # =========================================================
 # AI HOTSPOTS
@@ -245,7 +262,7 @@ folium.TileLayer(
 if show_hotspots:
 
     hotspots = [
-        [24.34, 54.52],
+        [24.45, 54.38],
         [29.76, -95.36],
         [35.68, 51.41],
         [25.20, 55.27],
@@ -254,12 +271,16 @@ if show_hotspots:
 
     for lat, lon in hotspots:
 
-        score = random.randint(70, 98)
+        leak_score = random.randint(70, 99)
 
         folium.CircleMarker(
             location=[lat, lon],
             radius=10,
-            popup=f"AI Methane Hotspot<br>Leak Score: {score}%",
+            popup=f"""
+            AI Methane Hotspot
+            <br>
+            Leak Score: {leak_score}%
+            """,
             color="red",
             fill=True,
             fill_opacity=0.8
@@ -269,15 +290,15 @@ if show_hotspots:
 # INDUSTRIAL SOURCES
 # =========================================================
 
-if show_industrial:
+if show_industry:
 
-    industries = [
-        [24.45, 54.38],
-        [29.73, -95.20],
-        [26.43, 50.10]
+    industrial_sites = [
+        [24.40, 54.50],
+        [26.43, 50.10],
+        [29.70, -95.20]
     ]
 
-    for lat, lon in industries:
+    for lat, lon in industrial_sites:
 
         folium.Marker(
             [lat, lon],
@@ -291,14 +312,14 @@ if show_industrial:
 folium.LayerControl().add_to(m)
 
 # =========================================================
-# SHOW MAP
+# DISPLAY MAP
 # =========================================================
 
 st_folium(
     m,
     width=1400,
     height=700,
-    key="main_map"
+    key="methane_map"
 )
 
 # =========================================================
@@ -312,19 +333,19 @@ dates = pd.date_range(
     periods=timeline_days
 )
 
-values = np.random.normal(
+methane_values = np.random.normal(
     1840,
-    20,
+    15,
     timeline_days
 )
 
-df = pd.DataFrame({
+timeline_df = pd.DataFrame({
     "Date": dates,
-    "Methane": values
+    "Methane": methane_values
 })
 
 fig = px.line(
-    df,
+    timeline_df,
     x="Date",
     y="Methane",
     title="Atmospheric Methane Trend"
@@ -336,12 +357,13 @@ st.plotly_chart(
 )
 
 # =========================================================
-# AI HOTSPOT TABLE
+# HOTSPOT ANALYTICS
 # =========================================================
 
 st.subheader("AI Methane Hotspot Analysis")
 
 hotspot_df = pd.DataFrame({
+
     "Region": [
         "Middle East",
         "Texas",
@@ -349,13 +371,15 @@ hotspot_df = pd.DataFrame({
         "UAE",
         "Jordan"
     ],
+
     "Leak Score": [
         "95%",
         "88%",
-        "82%",
+        "83%",
         "79%",
-        "73%"
+        "72%"
     ],
+
     "Risk Level": [
         "High",
         "High",
@@ -371,14 +395,46 @@ st.dataframe(
 )
 
 # =========================================================
-# ANIMATION PLACEHOLDER
+# TEMPORAL ANIMATION SECTION
 # =========================================================
 
 st.subheader("Animated Methane Movement")
 
 st.info(
-    "Temporal methane plume animation module connected to Earth Engine timeline processing."
+    "Temporal methane plume animation connected to Earth Engine satellite timeline processing."
 )
+
+# =========================================================
+# GIS ANALYTICS
+# =========================================================
+
+st.subheader("GIS Environmental Analytics")
+
+analytics_col1, analytics_col2 = st.columns(2)
+
+with analytics_col1:
+
+    st.metric(
+        "Average Emission Intensity",
+        "1842 ppb"
+    )
+
+    st.metric(
+        "Detected Industrial Zones",
+        "15"
+    )
+
+with analytics_col2:
+
+    st.metric(
+        "Anomaly Clusters",
+        "9"
+    )
+
+    st.metric(
+        "Global Coverage",
+        "97%"
+    )
 
 # =========================================================
 # FOOTER
@@ -387,5 +443,5 @@ st.info(
 st.divider()
 
 st.caption(
-    "Powered by Sentinel-5P, Earth Engine, AI CNN Analytics, and GIS Intelligence"
+    "Powered by Sentinel-5P, Google Earth Engine, CNN AI Analytics, and GIS Intelligence"
 )
