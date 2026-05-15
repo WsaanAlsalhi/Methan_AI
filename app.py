@@ -141,6 +141,26 @@ timeline_days = st.sidebar.slider(
 )
 
 # =========================================================
+# AI LOCATION ANALYSIS
+# =========================================================
+
+st.sidebar.subheader("AI Location Analysis")
+
+selected_lat = st.sidebar.number_input(
+    "Latitude",
+    value=24.45
+)
+
+selected_lon = st.sidebar.number_input(
+    "Longitude",
+    value=54.38
+)
+
+analyze_button = st.sidebar.button(
+    "Run AI Analysis"
+)
+
+# =========================================================
 # MAP STYLE
 # =========================================================
 
@@ -321,6 +341,104 @@ st_folium(
     height=700,
     key="methane_map"
 )
+
+# =========================================================
+# AI LOCATION ANALYSIS
+# =========================================================
+
+st.subheader("AI Methane Location Investigation")
+
+if analyze_button:
+
+    with st.spinner("Running AI methane analysis..."):
+
+        try:
+
+            point = ee.Geometry.Point(
+                [selected_lon, selected_lat]
+            )
+
+            methane_value = methane.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=point,
+                scale=1000
+            ).getInfo()
+
+            ch4 = methane_value.get(
+                "CH4_column_volume_mixing_ratio_dry_air",
+                None
+            )
+
+            if ch4 is not None:
+
+                st.success("AI Analysis Completed")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+
+                    st.metric(
+                        "Methane Concentration",
+                        f"{round(ch4,2)} ppb"
+                    )
+
+                with col2:
+
+                    if ch4 > 1880:
+                        risk = "High"
+
+                    elif ch4 > 1830:
+                        risk = "Medium"
+
+                    else:
+                        risk = "Low"
+
+                    st.metric(
+                        "Leak Risk",
+                        risk
+                    )
+
+                with col3:
+
+                    leak_score = min(
+                        99,
+                        int((ch4 - 1750) / 2)
+                    )
+
+                    st.metric(
+                        "AI Leak Score",
+                        f"{leak_score}%"
+                    )
+
+                if risk == "High":
+
+                    st.error(
+                        "Potential methane anomaly detected in this region."
+                    )
+
+                elif risk == "Medium":
+
+                    st.warning(
+                        "Moderate methane concentration observed."
+                    )
+
+                else:
+
+                    st.info(
+                        "Methane concentration within normal range."
+                    )
+
+            else:
+
+                st.warning(
+                    "No methane data available for this location."
+                )
+
+        except Exception as e:
+
+            st.error(
+                f"Location Analysis Error: {e}"
+            )
 
 # =========================================================
 # TEMPORAL ANALYSIS
