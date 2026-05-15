@@ -5,81 +5,133 @@ import folium
 from streamlit_folium import st_folium
 
 
-# -----------------------------
+# =========================================
 # PAGE CONFIG
-# -----------------------------
+# =========================================
+
 st.set_page_config(
-    page_title="Methane AI GIS System",
+    page_title="Methane Monitoring System",
     layout="wide"
 )
 
 
-# -----------------------------
-# EARTH ENGINE INIT (FIXED)
-# -----------------------------
+# =========================================
+# EARTH ENGINE AUTH
+# =========================================
+
 @st.cache_resource
-def init_earth_engine():
+def init_ee():
 
-    try:
-        credentials = service_account.Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
 
-        ee.Initialize(
-            credentials=credentials,
-            project="methane-ai-495915"
-        )
+    ee.Initialize(
+        credentials=credentials,
+        project="methane-ai-495915"
+    )
 
-        return "Earth Engine Connected"
-
-    except Exception as e:
-        return f"Connection Failed: {str(e)}"
+    return "Earth Engine Connected"
 
 
-status = init_earth_engine()
+status = init_ee()
+
 st.sidebar.success(status)
 
 
-# -----------------------------
-# SIMPLE GLOBAL MAP (GIS BASE)
-# -----------------------------
-st.title("Methane Detection GIS Dashboard")
+# =========================================
+# TITLE
+# =========================================
 
+st.title("Global Methane Monitoring GIS Platform")
 
-m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron")
-
-# Example methane hotspot markers (dummy demo)
-hotspots = [
-    [24.7136, 46.6753],   # Riyadh
-    [23.5859, 58.4059],   # Oman
-    [25.276987, 55.296249] # UAE
-]
-
-for i, point in enumerate(hotspots):
-    folium.CircleMarker(
-        location=point,
-        radius=8,
-        color="red",
-        fill=True,
-        fill_opacity=0.6,
-        popup=f"Methane Hotspot {i+1}"
-    ).add_to(m)
-
-
-# IMPORTANT: avoid duplicate keys error
-map_data = st_folium(
-    m,
-    width=1000,
-    height=500,
-    key="main_map"
+st.markdown(
+    """
+    Real-time atmospheric methane monitoring using Sentinel-5P satellite data,
+    Earth Engine cloud processing, and AI-based anomaly analysis.
+    """
 )
 
 
-# -----------------------------
-# SIDEBAR INFO
-# -----------------------------
-st.sidebar.title("System Info")
-st.sidebar.write("AI Methane Detection Platform")
-st.sidebar.write("Powered by CNN + Earth Engine")
-st.sidebar.write("Status: Production Mode")
+# =========================================
+# LOAD SENTINEL-5P METHANE
+# =========================================
+
+methane = (
+    ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
+    .select("CH4_column_volume_mixing_ratio_dry_air")
+    .filterDate("2025-01-01", "2025-12-31")
+    .mean()
+)
+
+
+# =========================================
+# VISUAL PARAMETERS
+# =========================================
+
+vis_params = {
+    "min": 1750,
+    "max": 1950,
+    "palette": [
+        "black",
+        "blue",
+        "cyan",
+        "green",
+        "yellow",
+        "orange",
+        "red"
+    ]
+}
+
+
+# =========================================
+# GET MAP TILES
+# =========================================
+
+map_id = methane.getMapId(vis_params)
+
+tile_url = map_id["tile_fetcher"].url_format
+
+
+# =========================================
+# CREATE GIS MAP
+# =========================================
+
+m = folium.Map(
+    location=[20, 0],
+    zoom_start=2,
+    tiles="CartoDB dark_matter"
+)
+
+
+# =========================================
+# ADD METHANE LAYER
+# =========================================
+
+folium.TileLayer(
+    tiles=tile_url,
+    attr="Google Earth Engine",
+    name="Methane Concentration",
+    overlay=True,
+    control=True
+).add_to(m)
+
+
+# =========================================
+# LAYER CONTROL
+# =========================================
+
+folium.LayerControl().add_to(m)
+
+
+# =========================================
+# SHOW MAP
+# =========================================
+
+st_folium(
+    m,
+    width=1400,
+    height=700,
+    key="methane_map"
+)
