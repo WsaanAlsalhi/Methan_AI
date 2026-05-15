@@ -60,7 +60,9 @@ h1, h2, h3, h4 {{ color: {PALETTE['text_hi']} !important; letter-spacing: -0.01e
 .app-hero {{
     background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(52,211,153,0.05));
     border: 1px solid {PALETTE['border']};
-    border-radius: 16px; padding: 22px 28px; margin-bottom: 18px;
+    border-radius: 16px;
+    padding: 22px 28px;
+    margin-bottom: 18px;
 }}
 .app-hero .badge {{
     display: inline-block; font-size: 11px; letter-spacing: 0.18em;
@@ -256,7 +258,7 @@ st.markdown(f"""
     <div class="title">Methane Intelligence Platform</div>
     <div class="subtitle">
         AI-powered global methane monitoring using satellite imagery, CNN segmentation,
-        and real-time daily GIS analytics.
+        and real-time GIS analytics.
     </div>
     <div class="status-row">{ee_status}{cnn_status}{sat_status}</div>
 </div>
@@ -287,16 +289,15 @@ sidebar_group("Visualization Layers")
 show_hotspots  = st.sidebar.checkbox("AI Methane Hotspots", value=True)
 show_heatmap   = st.sidebar.checkbox("Methane Heatmap", value=True)
 show_industry  = st.sidebar.checkbox("Industrial Sources", value=True)
-show_animation = st.sidebar.checkbox("Animated Methane Movement (daily)", value=False)
+show_animation = st.sidebar.checkbox("Animated Methane Movement", value=False)
 
 sidebar_group("Temporal Window")
 timeline_days = st.sidebar.slider("Days of history", 7, 90, 30)
-st.sidebar.caption(f"Analysis resolution: 1 sample per day · {timeline_days} daily points")
 
 sidebar_group("AI Location Probe")
 selected_lat = st.sidebar.number_input("Latitude",  value=24.45, format="%.4f")
 selected_lon = st.sidebar.number_input("Longitude", value=54.38, format="%.4f")
-analyze_button = st.sidebar.button("Run AI Analysis (daily series)")
+analyze_button = st.sidebar.button("Run AI Analysis")
 
 st.sidebar.markdown(
     f'<div style="margin-top:24px;font-size:11px;color:{PALETTE["text_lo"]};">'
@@ -330,19 +331,17 @@ k4.metric("Industrial Sources", "15", "+2")
 
 
 # =========================================================
-# LOAD SENTINEL-5P (daily window for current month)
+# LOAD SENTINEL-5P
 # =========================================================
 earth_engine_layer = False
 methane = None
 tile_url = None
-ee_start_date = (datetime.today() - timedelta(days=timeline_days)).strftime("%Y-%m-%d")
-ee_end_date   = datetime.today().strftime("%Y-%m-%d")
 
 if earth_engine_connected:
     try:
         methane_collection = (
             ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
-            .filterDate(ee_start_date, ee_end_date)
+            .filterDate("2025-01-01", "2025-05-01")
             .select("CH4_column_volume_mixing_ratio_dry_air")
         )
         methane = methane_collection.mean()
@@ -398,7 +397,7 @@ def color_for(intensity):
 # TABS
 # =========================================================
 tab_map, tab_ai, tab_trend, tab_intel = st.tabs(
-    ["Global Map", "AI Investigation", "Daily Temporal Analysis", "Intelligence"]
+    ["Global Map", "AI Investigation", "Temporal Trend", "Intelligence"]
 )
 
 
@@ -450,7 +449,9 @@ with tab_map:
         HeatMap(
             [[h["lat"], h["lon"], h["intensity"]] for h in hotspots],
             name="Methane Heatmap",
-            radius=28, blur=22, min_opacity=0.4,
+            radius=28,
+            blur=22,
+            min_opacity=0.4,
             gradient={0.2: "#0ea5e9", 0.4: "#22d3ee",
                       0.6: "#facc15", 0.8: "#fb923c", 1.0: "#ef4444"},
         ).add_to(m)
@@ -479,18 +480,15 @@ with tab_map:
                 )
             ).add_to(m)
 
-    # ------ Animated movement: ONE FRAME PER DAY ------
     if show_animation:
         features = []
         base_date = datetime.today() - timedelta(days=timeline_days)
         for hs in hotspots:
-            # daily walk for the plume
-            drift_lat = hs["lat"]
-            drift_lon = hs["lon"]
-            for d in range(timeline_days):      # <-- every single day
+            step = max(1, timeline_days // 12)
+            for d in range(0, timeline_days, step):
                 ts = (base_date + timedelta(days=d)).strftime("%Y-%m-%dT%H:%M:%S")
-                drift_lat += (random.random() - 0.5) * 0.04
-                drift_lon += (random.random() - 0.5) * 0.04
+                drift_lon = hs["lon"] + 0.05 * d * (random.random() - 0.5)
+                drift_lat = hs["lat"] + 0.05 * d * (random.random() - 0.5)
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [drift_lon, drift_lat]},
@@ -504,30 +502,29 @@ with tab_map:
                             "stroke": "true",
                             "radius": 6 + hs["intensity"] * 8
                         },
-                        "popup": hs["name"] + " - day " + str(d + 1)
+                        "popup": hs["name"] + " - intensity " + str(round(hs["intensity"], 2))
                     }
                 })
         TimestampedGeoJson(
             {"type": "FeatureCollection", "features": features},
             period="P1D",
-            duration="P1D",
-            transition_time=200,
             add_last_point=True,
             auto_play=False,
             loop=True,
-            max_speed=30,
+            max_speed=10,
             loop_button=True,
             date_options="YYYY-MM-DD",
         ).add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
+
     st_folium(m, width=None, height=620, key="methane_map", returned_objects=[])
 
 
-# ---------- TAB 2: AI Investigation (per-day series) ----------
+# ---------- TAB 2: AI Investigation ----------
 with tab_ai:
     section("AI Methane Location Investigation",
-            "Per-day CH4 measurement at the selected coordinate")
+            "Probe any (lat, lon) - CNN + Sentinel-5P")
 
     info_cols = st.columns([1, 1, 1])
     info_cols[0].markdown(
@@ -538,8 +535,7 @@ with tab_ai:
     )
     info_cols[1].markdown(
         "<div style='color:" + PALETTE["text_lo"] + ";font-size:13px'>"
-        "<b style='color:" + PALETTE["accent"] + "'>Window:</b> "
-        + ee_start_date + " to " + ee_end_date + "</div>",
+        "<b style='color:" + PALETTE["accent"] + "'>Source:</b> Sentinel-5P CH4</div>",
         unsafe_allow_html=True
     )
     info_cols[2].markdown(
@@ -552,103 +548,36 @@ with tab_ai:
     st.markdown(" ")
 
     if not analyze_button:
-        st.info("Press **Run AI Analysis** in the sidebar to extract a daily CH4 series.")
+        st.info("Press **Run AI Analysis** in the sidebar to probe a location.")
     else:
-        with st.spinner("Querying Sentinel-5P for each day..."):
+        with st.spinner("Running AI methane analysis..."):
             try:
-                if not earth_engine_connected:
-                    st.error("Earth Engine is not connected.")
+                if methane is None:
+                    st.error("Methane data unavailable - Earth Engine not initialized.")
                 else:
                     point = ee.Geometry.Point([selected_lon, selected_lat])
-
-                    # Build a daily collection: one image per day = daily mean
-                    def daily_mean_for(day_offset):
-                        d_start = (datetime.today() - timedelta(days=timeline_days - day_offset))
-                        d_end   = d_start + timedelta(days=1)
-                        col = (
-                            ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
-                            .filterDate(d_start.strftime("%Y-%m-%d"),
-                                        d_end.strftime("%Y-%m-%d"))
-                            .select("CH4_column_volume_mixing_ratio_dry_air")
-                        )
-                        img = col.mean()
-                        val = img.reduceRegion(
-                            reducer=ee.Reducer.mean(),
-                            geometry=point,
-                            scale=1000,
-                            maxPixels=1e9,
-                        ).getInfo()
-                        return d_start.date(), val.get(
-                            "CH4_column_volume_mixing_ratio_dry_air", None
-                        )
-
-                    # Earth Engine getInfo() per-day can be slow for long ranges.
-                    # We use a server-side aggregation instead: build a list of daily
-                    # means using ee.List and pull them back in one round trip.
-                    n_days = int(timeline_days)
-                    start_dt = datetime.today() - timedelta(days=n_days)
-
-                    def make_daily(d):
-                        d = ee.Number(d)
-                        start = ee.Date(start_dt.strftime("%Y-%m-%d")).advance(d, "day")
-                        end   = start.advance(1, "day")
-                        img = (
-                            ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_CH4")
-                            .filterDate(start, end)
-                            .select("CH4_column_volume_mixing_ratio_dry_air")
-                            .mean()
-                        )
-                        mean = img.reduceRegion(
-                            reducer=ee.Reducer.mean(),
-                            geometry=point,
-                            scale=1000,
-                            maxPixels=1e9,
-                        ).get("CH4_column_volume_mixing_ratio_dry_air")
-                        return ee.Feature(None, {"day": d, "ch4": mean})
-
-                    fc = ee.FeatureCollection(
-                        ee.List.sequence(0, n_days - 1).map(make_daily)
+                    methane_value = methane.reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=point,
+                        scale=1000
+                    ).getInfo()
+                    ch4 = methane_value.get(
+                        "CH4_column_volume_mixing_ratio_dry_air", None
                     )
-                    props = fc.getInfo()["features"]
-                    rows = []
-                    for f in props:
-                        p = f["properties"]
-                        rows.append({
-                            "Date": (start_dt + timedelta(days=int(p["day"]))).date(),
-                            "CH4 (ppb)": p["ch4"],
-                        })
-                    series_df = pd.DataFrame(rows)
 
-                    # Fill missing days with interpolation so the chart is continuous
-                    if series_df["CH4 (ppb)"].notna().any():
-                        series_df["CH4 (ppb)"] = (
-                            series_df["CH4 (ppb)"]
-                            .astype(float)
-                            .interpolate(limit_direction="both")
-                        )
+                    if ch4 is None:
+                        st.warning("No methane data available for this location.")
                     else:
-                        st.warning("No methane data was returned for this location.")
-                        series_df = pd.DataFrame(columns=["Date", "CH4 (ppb)"])
+                        if ch4 > 1880:   risk = "High"
+                        elif ch4 > 1830: risk = "Medium"
+                        else:            risk = "Low"
+                        leak_score = max(0, min(99, int((ch4 - 1750) / 2)))
 
-                    if not series_df.empty and series_df["CH4 (ppb)"].notna().any():
-                        # ---- Summary metrics from the daily series ----
-                        latest_ch4 = float(series_df["CH4 (ppb)"].iloc[-1])
-                        mean_ch4   = float(series_df["CH4 (ppb)"].mean())
-                        max_ch4    = float(series_df["CH4 (ppb)"].max())
-                        max_day    = series_df.loc[series_df["CH4 (ppb)"].idxmax(), "Date"]
-
-                        if latest_ch4 > 1880:   risk = "High"
-                        elif latest_ch4 > 1830: risk = "Medium"
-                        else:                   risk = "Low"
-                        leak_score = max(0, min(99, int((latest_ch4 - 1750) / 2)))
-
-                        # CNN confidence (best effort)
                         ai_confidence = None
                         if cnn_model is not None:
                             try:
                                 patch = np.full((1, 1, 64, 64),
-                                                (latest_ch4 - 1750) / 200.0,
-                                                dtype=np.float32)
+                                                (ch4 - 1750) / 200.0, dtype=np.float32)
                                 patch += np.random.normal(0, 0.02, patch.shape).astype(np.float32)
                                 with torch.no_grad():
                                     pred = cnn_model(torch.from_numpy(patch))
@@ -656,15 +585,13 @@ with tab_ai:
                             except Exception:
                                 ai_confidence = None
 
-                        cols = st.columns(5 if ai_confidence is not None else 4)
-                        cols[0].metric("Latest CH4",      f"{round(latest_ch4, 2)} ppb")
-                        cols[1].metric("Window Mean",     f"{round(mean_ch4, 2)} ppb")
-                        cols[2].metric("Peak CH4",        f"{round(max_ch4, 2)} ppb",
-                                       f"on {max_day}")
-                        cols[3].metric("Leak Risk",       risk)
+                        cols = st.columns(4 if ai_confidence is not None else 3)
+                        cols[0].metric("Methane Concentration", str(round(ch4, 2)) + " ppb")
+                        cols[1].metric("Leak Risk", risk)
+                        cols[2].metric("AI Leak Score", str(leak_score) + "%")
                         if ai_confidence is not None:
-                            cols[4].metric("CNN Confidence",
-                                           f"{ai_confidence * 100:.1f}%")
+                            cols[3].metric("CNN Confidence",
+                                           ("%.1f" % (ai_confidence * 100)) + "%")
 
                         if risk == "High":
                             st.error("Warning: Potential methane anomaly detected in this region.")
@@ -673,112 +600,33 @@ with tab_ai:
                         else:
                             st.success("Methane concentration within normal range.")
 
-                        section("Daily CH4 at Target Location",
-                                f"{len(series_df)} daily samples")
-
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(
-                            x=series_df["Date"],
-                            y=series_df["CH4 (ppb)"],
-                            mode="lines+markers",
-                            line=dict(color=PALETTE["accent"], width=2),
-                            marker=dict(size=6, color=PALETTE["accent"]),
-                            fill="tozeroy",
-                            fillcolor="rgba(34,211,238,0.10)",
-                            name="CH4 (ppb)",
-                            hovertemplate="%{x|%b %d}<br>%{y:.2f} ppb<extra></extra>",
-                        ))
-                        fig.add_hline(y=1880, line_dash="dash",
-                                      line_color=PALETTE["danger"],
-                                      annotation_text="High risk threshold",
-                                      annotation_position="top right",
-                                      annotation_font_color=PALETTE["danger"])
-                        fig.add_hline(y=1830, line_dash="dash",
-                                      line_color=PALETTE["warn"],
-                                      annotation_text="Medium risk threshold",
-                                      annotation_position="bottom right",
-                                      annotation_font_color=PALETTE["warn"])
-                        fig.update_layout(title="Per-Day Methane Concentration")
-                        st.plotly_chart(style_plotly(fig), use_container_width=True)
-
-                        with st.expander("Daily risk breakdown table"):
-                            tbl = series_df.copy()
-                            def _risk(v):
-                                if v > 1880: return "High"
-                                if v > 1830: return "Medium"
-                                return "Low"
-                            tbl["Risk"] = tbl["CH4 (ppb)"].apply(_risk)
-                            tbl["CH4 (ppb)"] = tbl["CH4 (ppb)"].round(2)
-                            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
             except Exception as e:
                 st.error("Location analysis error: " + str(e))
 
 
-# ---------- TAB 3: Daily Temporal Analysis ----------
+# ---------- TAB 3: Temporal Trend ----------
 with tab_trend:
-    section("Daily Temporal Methane Analysis",
-            f"One sample per day across the past {timeline_days} days")
+    section("Temporal Methane Analysis",
+            "Past " + str(timeline_days) + " days - simulated atmospheric trend")
 
-    dates = pd.date_range(end=datetime.today(), periods=timeline_days, freq="D")
+    dates = pd.date_range(end=datetime.today(), periods=timeline_days)
     trend = np.linspace(0, 8, timeline_days)
-    seasonal = 6 * np.sin(np.linspace(0, 3 * np.pi, timeline_days))
-    noise = np.random.normal(0, 6, timeline_days)
-    methane_values = 1840 + trend + seasonal + noise
-    timeline_df = pd.DataFrame({
-        "Date": dates,
-        "CH4 (ppb)": np.round(methane_values, 2),
-    })
-    timeline_df["Daily Delta"] = timeline_df["CH4 (ppb)"].diff().round(2)
-    timeline_df["Risk"] = timeline_df["CH4 (ppb)"].apply(
-        lambda v: "High" if v > 1880 else ("Medium" if v > 1830 else "Low")
-    )
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Days analyzed", str(len(timeline_df)))
-    k2.metric("Daily mean", f"{timeline_df['CH4 (ppb)'].mean():.2f} ppb")
-    k3.metric("Daily peak", f"{timeline_df['CH4 (ppb)'].max():.2f} ppb")
-    k4.metric("High-risk days",
-              str(int((timeline_df['Risk'] == 'High').sum())))
+    noise = np.random.normal(0, 12, timeline_days)
+    methane_values = 1840 + trend + noise
+    timeline_df = pd.DataFrame({"Date": dates, "Methane": methane_values})
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=timeline_df["Date"], y=timeline_df["CH4 (ppb)"],
-        mode="lines+markers",
+        x=timeline_df["Date"], y=timeline_df["Methane"],
+        mode="lines",
         line=dict(color=PALETTE["accent"], width=2),
-        marker=dict(size=5, color=PALETTE["accent"]),
         fill="tozeroy",
         fillcolor="rgba(34,211,238,0.10)",
         name="CH4 (ppb)",
-        hovertemplate="%{x|%b %d}<br>%{y:.2f} ppb<extra></extra>",
     ))
-    fig.add_hline(y=1880, line_dash="dash", line_color=PALETTE["danger"],
-                  annotation_text="High risk",
-                  annotation_font_color=PALETTE["danger"])
-    fig.add_hline(y=1830, line_dash="dash", line_color=PALETTE["warn"],
-                  annotation_text="Medium risk",
-                  annotation_font_color=PALETTE["warn"])
-    fig.update_layout(title="Daily Atmospheric Methane")
+    fig.update_layout(title="Atmospheric Methane Trend (ppb)")
     fig.update_yaxes(range=[1800, 1900])
     st.plotly_chart(style_plotly(fig), use_container_width=True)
-
-    delta_fig = go.Figure()
-    delta_colors = [
-        PALETTE["danger"] if v and v > 0 else PALETTE["accent_2"]
-        for v in timeline_df["Daily Delta"]
-    ]
-    delta_fig.add_trace(go.Bar(
-        x=timeline_df["Date"],
-        y=timeline_df["Daily Delta"],
-        marker_color=delta_colors,
-        name="Day-over-day change",
-        hovertemplate="%{x|%b %d}<br>Delta %{y:.2f} ppb<extra></extra>",
-    ))
-    delta_fig.update_layout(title="Day-over-Day Change (ppb)")
-    st.plotly_chart(style_plotly(delta_fig), use_container_width=True)
-
-    with st.expander("Full daily series table"):
-        st.dataframe(timeline_df, use_container_width=True, hide_index=True)
 
 
 # ---------- TAB 4: Intelligence ----------
